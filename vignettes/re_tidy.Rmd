@@ -1,0 +1,47 @@
+---
+title: "Report Exercise - Data Wrangling"
+author: "Emmanuel Schaad"
+output:
+  html_document:
+---
+
+
+```{r}
+# loading necessary libraries
+library(readr)
+library(dplyr)
+```
+
+```{r}
+# reading in the data from the csv file
+soil_carbon_data <- readr::read_csv2("./data/soil_organic_C_Kees2014.csv")
+
+# check class type
+sapply(soil_carbon_data, class) # time_yr needs to be converted to numeric
+soil_carbon_data$time_yr <- as.numeric(soil_carbon_data$time_yr)
+
+# defining a function to calculate log-response ratio
+log_rr <- function(elevated, ambient){
+  log(elevated / ambient)
+}
+
+# adding column to distinguish phase for aggregating + column of log response ratio for each parallel observation
+soil_carbon_data <- soil_carbon_data |> mutate(phase = case_when(
+    time_yr < 3 ~ "early",
+    time_yr >= 3 & time_yr <= 6 ~ "mid",
+    TRUE ~ "late"
+  ),
+  logRR = log_rr(meanC_incrCO2, meanC_ambCO2))
+```
+
+```{r}
+# aggregating data across each phase and taking the mean of logRR for each phase
+logRR_phases <- soil_carbon_data |> group_by(phase) |> 
+  summarise(logRR_mean = mean(logRR, na.rm = TRUE),
+            n_datapoints = n(),
+            .groups = 'drop'
+  ) |> arrange(match(phase, c("early", "mid", "late")))
+
+knitr::kable(logRR_phases, "pipe")
+```
+
