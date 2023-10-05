@@ -43,6 +43,5 @@ logRR_phases <- soil_carbon_data |> group_by(phase) |>
   ) |> arrange(match(phase, c("early", "mid", "late")))
 
 knitr::kable(logRR_phases, "pipe")
-# test comment
 ```
 
