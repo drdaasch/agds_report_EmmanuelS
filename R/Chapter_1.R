@@ -1,3 +1,6 @@
+library(dplyr)
+
+
 # Dimensions of a circle
 r <- 1
 A <- r^2*pi
@@ -37,4 +40,4 @@ print(quakes)
 dim(quakes)
 mag <- quakes$mag
 max_mag <- max(mag)
-geopos_max_mag <- subset(quakes, mag == max_mag) %>% select(lat, long)
+geopos_max_mag <- subset(quakes, mag == max_mag) |> select(lat, long)
