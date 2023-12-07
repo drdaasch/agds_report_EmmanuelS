@@ -1,0 +1,31 @@
+---
+title: "Phenology trends and algorithms"
+author: "Emmanuel Schaad"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: hide
+---   
+
+
+# Physical geography and phenology
+Interpret the results of Section 4.3 (Section Phenology Trends) and the fit model as shown in the collapsed note at the end of the section.
+
+**Questions:**  
+Q1: What does the intercept indicate?  
+Q2: How can you interpret the slope?  
+Q3:Convert the established relationship with altitude, to one with temperature. How would you go about this?  
+
+**Answers**  
+A1: The intercept describes the MODIS vegetation green-up (as Day of Year), when the altitude above sea level is 0 m, meaning, at sea level.  
+A2: The slope of the regression denotes at which rate the green-up is "delayed", meaning, if for a given increase in altitude, the green-up is only shifted by a few days (low slope value) or a large number of days (large slope value). 
+THis might be due to the lapse rate of temperature, which decreases with altitute, therefore increasing the days until greenup
+A3: To convert the relationship of phenology vs. altitude to phenology vs. temperature, one would need to get the temperature values at each elevation when green-up occurs. However, this would not yet take into account the concept of growing degree days (GDD) as defined by the cumulative sum of temperatures above a specified threshold (T0, most commonly T0 = 5 °C).
+
+
+# Temporal and spatial anomalies
+
+# Scaling the calculation of phenology metrics

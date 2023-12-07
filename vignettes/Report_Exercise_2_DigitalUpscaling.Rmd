@@ -1,0 +1,350 @@
+---
+title: "Report Exercise: Spatial Upscaling"
+author: Emmanuel Schaad
+date: December, 2023
+output: html_document
+---
+
+
+
+
+```{r, echo = FALSE}
+list.of.packages <- c("ggplot2", "tidyverse", "caret", "OneR", "dplyr", "kableExtra")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+lapply(list.of.packages, library, character.only=TRUE)
+```
+
+
+```{r, echo = FALSE}
+df <- readr::read_csv("https://raw.githubusercontent.com/stineb/leafnp_data/main/data/leafnp_tian_et_al.csv")
+
+common_species <- df |> 
+  dplyr::group_by(Species) |> 
+  dplyr::summarise(count = n()) |> 
+  dplyr::arrange(desc(count)) |> 
+  dplyr::slice(1:50) |> 
+  dplyr::pull(Species)
+
+df_leafN <- df |> 
+  dplyr::select(leafN, lon, lat, elv, mat, map, ndep, mai, Species) |> 
+  filter(Species %in% common_species)
+
+# quick overview of data
+# skimr::skim(df_leafN)
+
+# show missing data
+# visdat::vis_miss(df_leafN)
+
+# df_leafN$Species <- df_leafN$Species |> as.factor()
+
+```
+
+
+##### EXERCISE 2.1: LITERATURE REVIEW
+
+1. The key difference lies in how the dataset is partitioned. Random cross-validation focuses on randomly distributing data points to ensure a fair representation across training and testing sets, while spatial cross-validation considers the spatial or temporal relationships between data points.
+In random cross-validation, the dataset is split randomly into a training and validation dataset (so that every datapoint has an equal chance of ending up in either sets), while the spatial cross-validation means that the dataset is split up based on (dis)similarities in time an space of the data (closer datapoints are usually grouped together). 
+
+2. One could use a type of environmental distance which takes into account environmental covariates (T, elevation, precipitation, vegetation, land use etc.). It could be evaluated as a distance matrix where you take each difference combination of covariates and give it an appropriate weight factor.
+
+##### EXERCISE 2.2 RANDOM CROSS-VALIDATION
+```{r, echo = FALSE}
+# Data splitting
+split <- rsample::initial_split(df_leafN, prop = 0.7, strata = "Species")
+ddf_train <- rsample::training(split)
+
+# model formulation
+pp <- recipes::recipe(leafN ~ elv + mat + map + ndep + mai + Species, 
+                      data = ddf_train) |> 
+  recipes::step_center(recipes::all_numeric(), -recipes::all_outcomes()) |>
+  recipes::step_scale(recipes::all_numeric(), -recipes::all_outcomes())
+
+rf_1000_5 <- caret::train(
+  pp, 
+  data = ddf_train |> 
+    drop_na(), 
+  method = "ranger",
+  metric = "RMSE",
+  trControl = trainControl(
+    method = "cv",
+    number = 5,
+    savePredictions = "final"
+    ),
+  tuneGrid = expand.grid(
+    .mtry = 3,        # default p/3
+    .min.node.size = 12,          
+    .splitrule = "variance"      # default "variance"
+  ),
+  # arguments specific to "ranger" method
+  num.trees = 1000
+)
+
+print(rf_1000_5)
+
+# OOB prediction error of the final model
+sqrt(rf_1000_5$finalModel$prediction.error)
+
+# RMSE of 5-fold cross-validation
+rf_1000_5$results$RMSE
+
+# Rsquared of 5-fold cross-validation
+rf_1000_5$results$Rsquared
+
+```
+
+##### EXERCISES 2.3: SPATIAL CROSS-VALIDATION
+```{r, echo = FALSE}
+# DISPLAYING SPATIAL DISTRIBUTION
+list.of.packages <- c("sf", "rnaturalearth", "rnaturalearthdata", "cowplot")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+lapply(list.of.packages, library, character.only=TRUE)
+
+# get coast outline
+coast <- rnaturalearth::ne_coastline(scale = 110, returnclass = "sf")
+
+ggplot() +
+
+  # plot coastline
+  geom_sf(data = coast,
+          colour = 'black',
+          size = 0.2) +
+
+  # set extent in longitude and latitude
+  coord_sf(
+    ylim = c(-60, 80),
+    expand = FALSE) +  # to draw map strictly bounded by the specified extent
+  
+  # plot points on map
+  geom_point(data = df_leafN, aes(x = lon, y = lat), color = "red", size = 0.2) +
+  labs(x = "", y = "") +
+  theme(legend.position = "bottom")
+```
+
+1. Main areas where data is available is central Europe and China. The Northern Hemisphere is thus overrepresented while Southern Hemisphere has very little datapoints. This could potentially lead to erroneous predictions for equatorial and southern hemisphere leafN values as predictors for this area is scarcely available.,
+
+2. Spatial cross-validation
+In a first step, 5 clusters based on geographical locations are determined. These clusters are then plotted on a map distinguished by color.
+```{r, echo = FALSE}
+clusters <- kmeans(
+  df_leafN |> dplyr::select(lon, lat),
+  centers = 5
+)
+
+df_leafN <- cbind(df_leafN, clusters[["cluster"]]) |> rename(cluster = 10)
+
+ggplot() +
+
+  # plot coastline
+  geom_sf(data = coast,
+          colour = 'black',
+          size = 0.3) +
+
+  # set extent in longitude and latitude
+  coord_sf(
+    ylim = c(-60, 80),
+    expand = FALSE) +  # to draw map strictly bounded by the specified extent
+  
+  # plot points on map
+  geom_point(data = df_leafN, aes(x = lon, y = lat, col = as.factor(cluster)),
+             size = 0.5) +
+  labs(x = "", y = "", col = "Cluster") +
+  theme(legend.position = "bottom") +
+  guides(colour = guide_legend(override.aes = list(size=5)))
+```
+
+3. Plotting distribution of leafN by cluster
+```{r, echo = FALSE}
+# Distribution curve plot
+curve_plot <- ggplot(df_leafN, aes(x = leafN, color = as.factor(cluster))) +
+  geom_density(alpha = 0.7) +
+  labs(x = "Leaf N content (%)", y = "Density", col = "Cluster") +
+  theme_minimal()
+
+# Boxplot plot
+boxplot_plot <- ggplot(df_leafN, aes(x = cluster, y = leafN, fill = as.factor(cluster))) +
+  geom_boxplot() +
+  labs(x = "Cluster", y = "Leaf N content (%)", fill = "Cluster") +
+  theme_minimal()
+
+# Combine both plots using cowplot package
+combined_plot <- plot_grid(curve_plot, boxplot_plot, ncol = 2, labels = c("A", "B"))
+
+print(combined_plot)
+```
+
+4. Splitting the data into five folds that correspond to the geographical clusters identified in (2.), and fitting a random forest model with the same hyperparameters as above and performing a 5-fold cross-validation with the clusters as folds. Reporting the RMSE and the Rsqr determined on each of the five folds.
+```{r, echo = FALSE}
+# create folds based on clusters
+group_folds_train <- purrr::map(
+  seq(length(unique(df_leafN$cluster))),
+  ~ {
+    df_leafN |> 
+      select(cluster) |> 
+      mutate(idx = 1:n()) |> 
+      filter(cluster != .) |> 
+      pull(idx)
+  }
+)
+
+group_folds_test <- purrr::map(
+  seq(length(unique(df_leafN$cluster))),
+  ~ {
+    df_leafN |> 
+      select(cluster) |> 
+      mutate(idx = 1:n()) |> 
+      filter(cluster == .) |> 
+      pull(idx)
+  }
+)
+
+# create a function that trains a random forest model on a given set of rows and 
+# predicts on a disjunct set of rows
+train_test_by_fold <- function(train_idx, val_idx) {
+  
+  # Train the model
+  mod <- ranger(
+    formula = leafN ~ elv + mat + map + ndep + mai + Species, 
+    data = df_leafN[train_idx, ],
+    mtry = 3,
+    min.node.size = 12,
+    num.trees = 500
+  )
+  
+  # Predict on the validation set
+  pred <- predict(mod, data = df_leafN[val_idx, ])
+  
+  # Calculate R-squared on the validation set
+  rsq <- cor(pred$predictions, df_leafN$leafN[val_idx])^2
+  
+  # Calculate RMSE on the validation set
+  rmse <- sqrt(mean((pred$predictions - df_leafN$leafN[val_idx])^2))
+  
+  return(tibble(rsq = rsq, rmse = rmse))
+}
+
+# apply function on each custom fold and collect validation results in a nice
+# data frame
+output <- purrr::map2_dfr(
+  group_folds_train,
+  group_folds_test,
+  ~train_test_by_fold(.x, .y)
+) |> 
+  mutate(test_fold = 1:5)
+
+print(output)
+```
+
+##### EXERCISE 2.4: ENVIRONMENTAL CROSS-VALIDATION
+The central rationale for spatial uspcaling is that we can model based on relationships between the target variable and the environment. The geographic location is not among the predictors. Thus, as long as the training data covers a wide enough range of environmental conditions, we can model for any new location where environmental conditions are within that range, irrespective of its geographical position. The challenge is just that the training data often doesn’t cover all environmental conditions of the globe, yet upscaling is often done for the globe.
+
+Anyways, let’s probe the generalisability of a model not in geographical space, but in environmental space.
+
+ 1. To do so, perform a custom cross-validation as above, but this time considering five clusters of points not in geographical space, but in environmental space - spanned by the mean annual precipitation and the mean annual temperature. Report the R-squared and the RMSE on the validation set of each of the five folds.
+```{r, echo = FALSE}
+clusters_env <- kmeans(
+  df_leafN |> dplyr::select(map, mat),
+  centers = 5
+)
+
+df_leafN <- cbind(df_leafN, clusters_env[["cluster"]]) |> rename(cluster_env = 11)
+
+ggplot() +
+
+  # plot coastline
+  geom_sf(data = coast,
+          colour = 'black',
+          size = 0.3) +
+
+  # set extent in longitude and latitude
+  coord_sf(
+    ylim = c(-60, 80),
+    expand = FALSE) +  # to draw map strictly bounded by the specified extent
+  
+  # plot points on map
+  geom_point(data = df_leafN, aes(x = lon, y = lat, col = as.factor(cluster_env)),
+             size = 0.5) +
+  labs(x = "", y = "", col = "Environmental Cluster",
+       title = "Environmental Clusters based on mean annual temperature and precipitation") +
+  theme(legend.position = "bottom") +
+  guides(colour = guide_legend(override.aes = list(size=5)))
+
+```
+```{r, echo = FALSE}
+# create folds based on envrionmental clusters
+group_folds_train <- purrr::map(
+  seq(length(unique(df_leafN$cluster_env))),
+  ~ {
+    df_leafN |> 
+      select(cluster_env) |> 
+      mutate(idx = 1:n()) |> 
+      filter(cluster_env != .) |> 
+      pull(idx)
+  }
+)
+
+group_folds_test <- purrr::map(
+  seq(length(unique(df_leafN$cluster_env))),
+  ~ {
+    df_leafN |> 
+      select(cluster_env) |> 
+      mutate(idx = 1:n()) |> 
+      filter(cluster_env == .) |> 
+      pull(idx)
+  }
+)
+
+# create a function that trains a random forest model on a given set of rows and 
+# predicts on a disjunct set of rows
+train_test_by_fold <- function(train_idx, val_idx) {
+  
+  # Train the model
+  mod <- ranger(
+    formula = leafN ~ elv + mat + map + ndep + mai + Species, 
+    data = df_leafN[train_idx, ],
+    mtry = 3,
+    min.node.size = 12,
+    num.trees = 1000
+  )
+  
+  # Predict on the validation set
+  pred <- predict(mod, data = df_leafN[val_idx, ])
+  
+  # Calculate R-squared on the validation set
+  rsq <- cor(pred$predictions, df_leafN$leafN[val_idx])^2
+  
+  # Calculate RMSE on the validation set
+  rmse <- sqrt(mean((pred$predictions - df_leafN$leafN[val_idx])^2))
+  
+  return(tibble(rsq = rsq, rmse = rmse))
+}
+
+# apply function on each custom fold and collect validation results in a nice
+# data frame
+output_env <- purrr::map2_dfr(
+  group_folds_train,
+  group_folds_test,
+  ~train_test_by_fold(.x, .y)
+) |> 
+  mutate(test_fold = 1:5)
+
+output_env
+
+```
+
+ 2. Compare the results of the environmental cross-validation to the results of the random and the spatial cross-validation and discuss reasons for why you observe a difference in the cross-validation metrics (if you do).
+```{r}
+n_cluster_geo <- table(df_leafN$cluster)
+n_cluster_env <- table(df_leafN$cluster_env)
+
+n_cluster_geo
+n_cluster_env
+```
+For the following discussion, it's important to keep in mind that clusters from the geographical clustering approach does not correspond to the environmental clustering, therefore it is not fully justified to make comparisons between clusters.
+Nevertheless, from the number of observations in each cluster, I observe the following:
+ * geographical clustering: ranges from 139 to 11868 observations per cluster
+ * environmental clustering: ranges from 337 to 9326 observations
+This would lead me to assume that only based on numbers, the training sets and validation sets for each clustering approach are approximately the same size, therefore, one would expect similar R^2 or RMSE values, if the clusters contain representative values for the predictors across all clusters. However, the very low R^2 of cluster 1 for the geographical clustering shows that this is not the case. More precisely, it shows that predicting leaf N content for different locations based on a distinct spatial cluster is less suitable, in other words: purely spatial upscaling might be unsuitable here.
+
+However, one can have a small sample size (e.g. cluster 1 from environmental clustering) and still a representative sample that yields high R^2, as it is the case here. Therefore it is crucial to test various clustering methods first (and potentially chose the one that makes the most sense from a biogeochemical view). This also shows that in case of leaf N content, it seems that mean annual T and P distribution have a stronger influence on this property than the pure geographical location (because of course  one might have very different T and P regimes at nearby locations, but similar T and P regimes might span over the whole globe - this is also visible from the maps that show the geographical and environmental clusters).
